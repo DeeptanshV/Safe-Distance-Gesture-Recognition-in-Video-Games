@@ -36,6 +36,14 @@ def get_args():
 
     return args
 
+# Colors
+WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
+RED = (0, 0, 255)
+
+# Distance
+SAFE = "Safe"
+UNSAFE = "UnSafe"
 
 def main():
     # Argument parsing #################################################################
@@ -48,6 +56,26 @@ def main():
     use_static_image_mode = args.use_static_image_mode
     min_detection_confidence = args.min_detection_confidence
     min_tracking_confidence = args.min_tracking_confidence
+
+    # variables
+    # distance from camera to object(face) measured
+    KNOWN_DISTANCE = 76.2  # centimeter
+    # width of face in the real world or Object Plane
+    KNOWN_WIDTH = 14.3  # centimeter
+
+    fonts = cv.FONT_HERSHEY_COMPLEX
+    cap = cv.VideoCapture(1)
+
+    # face detector object
+    face_detector = cv.CascadeClassifier("haarcascade_frontalface_default.xml")
+
+    # reading reference image from directory
+    ref_image = cv.imread("Ref_Image.jpg")
+
+    ref_image_face_width = face_data(ref_image, face_detector)
+    focal_length_found = focal_length(KNOWN_DISTANCE, KNOWN_WIDTH, ref_image_face_width)
+    # print(focal_length_found)
+    # cv.imshow("ref_image", ref_image)
 
     use_brect = True
 
@@ -114,6 +142,17 @@ def main():
         image = cv.flip(image, 1)  # Mirror display
         debug_image = copy.deepcopy(image)
 
+        # Distance Estimation ##################################################3
+        face_width_in_frame = face_data(image, face_detector)
+        if face_width_in_frame != 0:
+        # print(face_width_in_frame)
+            distance = distance_finder(focal_length_found,KNOWN_WIDTH, face_width_in_frame)
+            # print(distance)
+        distance_estimation_text = UNSAFE
+        if distance > 150:
+            distance_estimation_text = SAFE
+
+
         # Detection implementation #############################################################
         image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
@@ -171,6 +210,7 @@ def main():
                     handedness,
                     keypoint_classifier_labels[hand_sign_id],
                     point_history_classifier_labels[most_common_fg_id[0][0]],
+                    distance_estimation_text,
                 )
         else:
             point_history.append([0, 0])
@@ -520,7 +560,7 @@ def draw_bounding_rect(use_brect, image, brect):
 
 
 def draw_info_text(image, brect, handedness, hand_sign_text,
-                   finger_gesture_text):
+                   finger_gesture_text, distance_estimation_text=""):
     cv.rectangle(image, (brect[0], brect[1]), (brect[2], brect[1] - 22),
                  (0, 0, 0), -1)
 
@@ -530,12 +570,21 @@ def draw_info_text(image, brect, handedness, hand_sign_text,
     cv.putText(image, info_text, (brect[0] + 5, brect[1] - 4),
                cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv.LINE_AA)
 
-    if finger_gesture_text != "":
-        cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
-                   cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 4, cv.LINE_AA)
-        cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
-                   cv.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2,
+    if distance_estimation_text != "":
+        distance_color = RED
+        if distance_estimation_text == SAFE:
+            distance_color = GREEN
+        cv.putText(image, "Distance:" + distance_estimation_text, (10, 60),
+                   cv.FONT_HERSHEY_SIMPLEX, 1.0, distance_color, 2,
                    cv.LINE_AA)
+
+    if finger_gesture_text != "":
+        return image
+        # cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
+        #            cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 4, cv.LINE_AA)
+        # cv.putText(image, "Finger Gesture:" + finger_gesture_text, (10, 60),
+        #            cv.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2,
+        #            cv.LINE_AA)
 
     return image
 
@@ -566,6 +615,42 @@ def draw_info(image, fps, mode, number):
                        cv.LINE_AA)
     return image
 
+# focal length finder function
+def focal_length(measured_distance, real_width, width_in_rf_image):
+    """
+    This Function Calculate the Focal Length(distance between lens to CMOS sensor), it is simple constant we can find by using
+    MEASURED_DISTACE, REAL_WIDTH(Actual width of object) and WIDTH_OF_OBJECT_IN_IMAGE
+    :param1 Measure_Distance(int): It is distance measured from object to the Camera while Capturing Reference image
+
+    :param2 Real_Width(int): It is Actual width of object, in real world (like My face width is = 14.3 centimeters)
+    :param3 Width_In_Image(int): It is object width in the frame /image in our case in the reference image(found by Face detector)
+    :retrun focal_length(Float):"""
+    focal_length_value = (width_in_rf_image * measured_distance) / real_width
+    return focal_length_value
+
+
+# distance estimation function
+def distance_finder(focal_length, real_face_width, face_width_in_frame):
+    """
+    This Function simply Estimates the distance between object and camera using arguments(focal_length, Actual_object_width, Object_width_in_the_image)
+    :param1 focal_length(float): return by the focal_length_Finder function
+
+    :param2 Real_Width(int): It is Actual width of object, in real world (like My face width is = 5.7 Inches)
+    :param3 object_Width_Frame(int): width of object in the image(frame in our case, using Video feed)
+    :return Distance(float) : distance Estimated
+    """
+    distance = (real_face_width * focal_length) / face_width_in_frame
+    return distance
+
+
+# face detector function
+def face_data(image, face_detector):
+    face_width = 0
+    gray_image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    faces = face_detector.detectMultiScale(gray_image, 1.3, 5)
+    for (x, y, h, w) in faces:
+        face_width = w
+    return face_width
 
 if __name__ == '__main__':
     main()
